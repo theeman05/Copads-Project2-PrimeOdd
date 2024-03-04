@@ -5,6 +5,7 @@
     using System.Security.Cryptography;
     using System.Diagnostics;
     using System.Collections.Concurrent;
+    using System.Diagnostics.Metrics;
 
     /// <summary>
     /// Class for a threadsafe object that can be incremented.
@@ -72,7 +73,7 @@
         {
             if (value == 2 || value == 3)
                 return true;
-            else if (value <= 1)
+            else if (value <= 1 || value.IsEven)
                 return false;
 
             BigInteger r = 0, d = value - 1;
@@ -93,6 +94,10 @@
                 for(BigInteger j = 0; j < r - 1; j++)
                 {
                     x = BigInteger.ModPow(x, BIG_TWO, value);
+
+                    if (x == 1)
+                        return false;
+
                     if (x == value - 1)
                         break;
                 }
@@ -106,12 +111,17 @@
 
         public static BigInteger GetFactorCount(this BigInteger value)
         {
-            // Start with 2 because itself and 1 is always a factor
-            BigInteger factorCount = 2;
-            for (BigInteger i = 3; i * i <= value; i += 2)
-                if (value % i == 0)
+            BigInteger absVal = BigInteger.Abs(value);
+            if (absVal == 1)
+                return 1;
+            else if (absVal == 0)
+                throw new Exception("Cannot calculate factor count of 0.");
+
+            BigInteger factorCount = new(2);
+            for (BigInteger i = 3; i * i <= absVal; i += 2)
+                if (absVal % i == 0)
                     factorCount += BIG_TWO; // i and number / i are factors, add both.
-            
+
             return factorCount;
         }
     }
@@ -122,9 +132,10 @@
     class Program
     {
         private static readonly string HELP_MESSAGE = "Usage: NumGen <bits> <option> <count>\n- bits - the number of bits of the number to be generated, this must be a multiple of 8, and at least 32 bits.\n- option - 'odd' or 'prime' (the type of numbers to be generated)\n- count - the count of numbers to generate, defaults to 1";
+        private static readonly int BATCH_SIZE = 500;
         private static readonly string[] EMPTY_ARGS = Array.Empty<string>();
-        private enum CheckMethod { Prime, Odd };
         private static readonly object printLock = new();
+        private enum CheckMethod { Prime, Odd };
 
         private static (int, CheckMethod, int) ValidateArgs(string[] args)
         {
@@ -180,52 +191,72 @@
             return (bitCount, method, generations);
         }
 
-        private static void ThreadsafePrintWithCount(ThreadsafeObject<int> counter, object toPrint)
+        private static bool ThreadsafePrintWithCount(ThreadsafeObject<int> counter, object toPrint, int maxPrint)
         {
             try
             {
                 Monitor.Enter(printLock);
-                if (counter.Value > 0) Console.WriteLine();
-                Console.WriteLine($"{counter++.Value}: {toPrint}");
+                if (counter.Value < maxPrint)
+                {
+                    if (counter.Value > 0) Console.WriteLine();
+                    Console.WriteLine($"{counter++.Value}: {toPrint}");
+                    if (counter.Value == maxPrint)
+                        return true;
+                }
+                return false;
             }
             finally { Monitor.Exit(printLock); }
         }
 
         public static void Main(string[] args)
         {
-            int bitCount, generations;
+            int bitCount, byteCount, generations;
             CheckMethod method;
             Stopwatch sw = new();
-            ThreadsafeObject<int> counter = new(0);
 
             for (;;)
             {
-                counter.Value = 0;
+                ThreadsafeObject<int> printCounter = new(0);
                 (bitCount, method, generations) = ValidateArgs(args);
                 Console.WriteLine($"BitLength: {bitCount} bits");
                 sw.Restart();
 
-                Parallel.For(0, generations, _ =>
+                byteCount = bitCount / 8;
+
+                bool lastHasBeenPrinted = false;
+                RandomNumberGenerator rng = RandomNumberGenerator.Create();
+
+                while (!lastHasBeenPrinted) // Iterates a lot more than generations, but only prints the first calculated generations
                 {
-                    byte[] randomBytes = new byte[bitCount / 8];
-                    using (RandomNumberGenerator rng = RandomNumberGenerator.Create())
-                    {
-                        rng.GetBytes(randomBytes);
-                    }
+                    Task.Run(() => { // Utilizes thread pool for parallel generation
+                        byte[] randomBytes = new byte[byteCount];
+                        for (int i = 0; i < BATCH_SIZE && !lastHasBeenPrinted; i++)
+                        {
+                            rng.GetBytes(randomBytes);
 
-                    BigInteger bigInt = new(randomBytes);
-                    if (method == CheckMethod.Odd && !bigInt.IsEven)
-                        ThreadsafePrintWithCount(counter, $"{bigInt}\nNumber of factors: {bigInt.GetFactorCount()}");
-                    else if (method == CheckMethod.Prime && bigInt.IsProbablyPrime())
-                        ThreadsafePrintWithCount(counter, bigInt);
-                });
+                            BigInteger bigInt = BigInteger.Abs(new(randomBytes));
+                            if (method == CheckMethod.Odd && !bigInt.IsEven && bigInt != 0)
+                            {
+                                if (ThreadsafePrintWithCount(printCounter, $"{bigInt}\nNumber of factors: {bigInt.GetFactorCount()}", generations))
+                                    lastHasBeenPrinted = true;
+                            }
+                            else if (method == CheckMethod.Prime && bigInt.IsProbablyPrime())
+                            {
+                                if (ThreadsafePrintWithCount(printCounter, bigInt, generations))
+                                    lastHasBeenPrinted = true;
+                            }
+                        }
+                    });
+                }
 
+                while (!lastHasBeenPrinted) { }
+                rng.Dispose();
                 sw.Stop();
+                args = EMPTY_ARGS;
                 Console.WriteLine($"Time to Generate: {sw.Elapsed}");
                 Console.Write("Press any key to continue...");
                 Console.ReadKey();
                 Console.WriteLine("\n");
-                args = EMPTY_ARGS;
             }
         }
     }
