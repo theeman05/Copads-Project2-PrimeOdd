@@ -1,11 +1,17 @@
-﻿namespace System
+﻿////////////////////////////////////////////////////////////////////////////////////////////////////////
+//FileName: Program.cs
+//Author : Ethan Hartman (ehh4525@rit.edu)
+//Created On : 2/29/2024
+//Last Modified On : 3/18/2024
+//Description : Program to generate large prime numbers and the factors of odd numbers using the C# parallel libraries.
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+namespace System
 {
     using System.Numerics;
     using System.Threading.Tasks;
     using System.Security.Cryptography;
     using System.Diagnostics;
-    using System.Collections.Concurrent;
-    using System.Diagnostics.Metrics;
 
     /// <summary>
     /// Class for a threadsafe object that can be incremented.
@@ -128,6 +134,8 @@
 
     /// <summary>
     /// Main class for the primechecker program.
+    /// Allows users to input a bit count, and a method to generate prime or odd numbers.
+    /// The user can also insert an optional count of numbers to generate, which defaults to 1.
     /// </summary>
     class Program
     {
@@ -171,7 +179,7 @@
                 }
 
                 if (args.Length == 3) // If we have a third argument, it must be the valid generation count
-                try
+                    try
                     {
                         generations = int.Parse(args[2]);
                         if (generations < 1)
@@ -225,7 +233,6 @@
 
                 bool lastHasBeenPrinted = false;
                 RandomNumberGenerator rng = RandomNumberGenerator.Create();
-
                 while (!lastHasBeenPrinted) // Iterates a lot more than generations, but only prints the first calculated generations
                 {
                     Task.Run(() => { // Utilizes thread pool for parallel generation
