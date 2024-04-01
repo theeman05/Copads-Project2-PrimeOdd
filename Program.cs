@@ -77,6 +77,11 @@ namespace System
 
         public static bool IsProbablyPrime(this BigInteger value, int k = 10)
         {
+            // Quick check for small numbers
+            for (int i = 3; i < 1000; i++)
+                if (value % i == 0)
+                    return false;
+
             if (value == 2 || value == 3)
                 return true;
             else if (value <= 1 || value.IsEven)
